@@ -1,4 +1,4 @@
-package com.example.simplegitapp
+package com.example.sampleapp
 
 import android.os.Bundle
 import android.util.Log
