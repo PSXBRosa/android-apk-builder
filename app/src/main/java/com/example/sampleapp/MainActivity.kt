@@ -20,9 +20,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Define the local directory where the repo will live
-        val repoDir = File(filesDir, "my_repo")
-        
+        val repoDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), 
+            "my_repo"
+        )
         setContent {
             MaterialTheme {
                 Surface(
