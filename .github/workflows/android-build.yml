@@ -33,6 +33,9 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    - name: Download actual Gradle Wrapper JAR
+      run: curl -sL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar
+
     - name: Build with Gradle
       run: ./gradlew build
 
