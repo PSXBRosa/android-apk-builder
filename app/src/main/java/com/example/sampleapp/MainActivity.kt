@@ -161,10 +161,10 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var hasStoragePermission by remember {
         mutableStateOf(
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.Build_VERSION_CODES.R) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 Environment.isExternalStorageManager()
             } else {
-                true // Older Android versions don't need this specific permission flag
+                true
             }
         )
     }
