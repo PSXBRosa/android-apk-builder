@@ -158,7 +158,25 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
         unfocusedLabelColor = Color.Gray,
         cursorColor = SaturatedOrange
     )
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.Build_VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                true // Older Android versions don't need this specific permission flag
+            }
+        )
+    }
 
+    // A launcher to check if permission was granted when they return from settings
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            hasStoragePermission = Environment.isExternalStorageManager()
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
