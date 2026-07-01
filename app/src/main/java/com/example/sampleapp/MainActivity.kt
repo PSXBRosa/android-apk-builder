@@ -7,11 +7,14 @@ import android.os.Environment
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -23,19 +26,109 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.io.File
 
+// --- Custom Theme Colors ---
+val SaturatedOrange = Color(0xFFFF6D00)
+val DarkBackground = Color(0xFF121212)
+val DarkSurface = Color(0xFF1E1E1E)
+
+val OrangeDarkColorScheme = darkColorScheme(
+    primary = SaturatedOrange,
+    onPrimary = Color.Black,
+    background = DarkBackground,
+    onBackground = SaturatedOrange,
+    surface = DarkSurface,
+    onSurface = SaturatedOrange,
+    primaryContainer = Color(0xFF2C2C2C),
+    onPrimaryContainer = SaturatedOrange,
+    errorContainer = Color(0xFFCF6679),
+    onErrorContainer = Color.Black
+)
+
+@Composable
+fun DirectoryPickerDialog(
+    initialDir: File,
+    onDismiss: () -> Unit,
+    onDirSelected: (File) -> Unit
+) {
+    var currentDir by remember { mutableStateOf(initialDir) }
+
+    // Get list of folders only, sorted alphabetically
+    val folders = currentDir.listFiles { file -> file.isDirectory && !file.isHidden }
+        ?.sortedBy { it.name } ?: emptyList()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Select Folder", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = currentDir.absolutePath,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // "Go Up" Button
+                if (currentDir.parentFile != null) {
+                    TextButton(
+                        onClick = { currentDir = currentDir.parentFile!! },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("📁 .. (Go Up)")
+                    }
+                }
+
+                Divider()
+
+                // Scrollable list of folders
+                Box(modifier = Modifier.heightIn(max = 300.dp)) {
+                    if (folders.isEmpty()) {
+                        Text(
+                            "No subfolders",
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.Gray
+                        )
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn {
+                            items(folders.size) { index ->
+                                val folder = folders[index]
+                                TextButton(
+                                    onClick = { currentDir = folder },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("📁 ${folder.name}")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onDirSelected(currentDir) }) {
+                Text("Select This Folder")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Use SharedPreferences for data permanence
+
         val sharedPreferences = getSharedPreferences("GitAppPrefs", Context.MODE_PRIVATE)
-        
-        // Default safe directory that doesn't require complex SAF permissions for JGit
         val defaultDir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)?.absolutePath ?: filesDir.absolutePath
         val defaultRepoPath = "$defaultDir/my_repo"
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = OrangeDarkColorScheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -51,21 +144,47 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
     val coroutineScope = rememberCoroutineScope()
-    
-    // State backed by SharedPreferences
+
     var localPath by remember { mutableStateOf(prefs.getString("LOCAL_PATH", defaultRepoPath) ?: defaultRepoPath) }
     var remoteUrl by remember { mutableStateOf(prefs.getString("REMOTE_URL", "https://github.com/username/repo.git") ?: "") }
     var username by remember { mutableStateOf(prefs.getString("USERNAME", "") ?: "") }
-    var token by remember { mutableStateOf(prefs.getString("TOKEN", "") ?: "") } 
-    
+    var token by remember { mutableStateOf(prefs.getString("TOKEN", "") ?: "") }
+
     var statusMessage by remember { mutableStateOf("Ready") }
     var isError by remember { mutableStateOf(false) }
+    // Collapsible Menu State
+    var isConfigExpanded by remember { mutableStateOf(true) }
 
-    // Dynamically check if the current path points to an existing Git repository
-    val currentRepoDir = File(localPath)
-    val isExistingRepo = File(currentRepoDir, ".git").exists()
+    // Directory Picker State
+    var showDirPicker by remember { mutableStateOf(false) }
+    // Collapsible Menu State
+    var isConfigExpanded by remember { mutableStateOf(true) }
 
-    // Helper to run Git operations on a background thread
+    // Use absoluteFile to ensure JGit gets a fully resolved path
+    val currentRepoDir = File(localPath).absoluteFile
+    // Check for "config" or "HEAD" to ensure it's a fully initialized git repo, not just an empty folder
+    val isExistingRepo = File(currentRepoDir, ".git/config").exists() || File(currentRepoDir, ".git/HEAD").exists()
+
+    LaunchedEffect(localPath) {
+        if (isExistingRepo) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val git = Git.open(currentRepoDir)
+                    val url = git.repository.config.getString("remote", "origin", "url")
+                    git.close()
+
+                    if (!url.isNullOrBlank()) {
+                        updatePref("REMOTE_URL", url) { v -> remoteUrl = v }
+                    } else {
+                        updatePref("REMOTE_URL", "") { v -> remoteUrl = v }
+                    }
+                } catch (e: Exception) {
+                    Log.e("GitApp", "Could not read remote URL", e)
+                }
+            }
+        }
+    }
+
     fun runGitOp(operationName: String, block: () -> Unit) {
         coroutineScope.launch {
             isError = false
@@ -81,11 +200,21 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
         }
     }
 
-    // Helper to update state and save to SharedPreferences simultaneously
     fun updatePref(key: String, value: String, updater: (String) -> Unit) {
         updater(value)
         prefs.edit().putString(key, value).apply()
     }
+
+    // Standardize TextField colors for the custom theme
+    val textFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = SaturatedOrange,
+        unfocusedTextColor = SaturatedOrange,
+        focusedBorderColor = SaturatedOrange,
+        unfocusedBorderColor = Color.Gray,
+        focusedLabelColor = SaturatedOrange,
+        unfocusedLabelColor = Color.Gray,
+        cursorColor = SaturatedOrange
+    )
 
     Scaffold(
         topBar = {
@@ -103,14 +232,14 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                 .padding(paddingValues)
                 .padding(16.dp)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState()), // Allows scrolling when keyboard is open
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
             // --- Status Indicator ---
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surface
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -118,50 +247,97 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                     text = "Status: $statusMessage",
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
                 )
             }
 
-            // --- Configuration Card ---
+            // --- Configuration Card (Collapsible) ---
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("Configuration", style = MaterialTheme.typography.titleMedium)
-                    
-                    OutlinedTextField(
-                        value = localPath,
-                        onValueChange = { updatePref("LOCAL_PATH", it) { v -> localPath = v } },
-                        label = { Text("Local Folder Path") },
-                        modifier = Modifier.fillMaxWidth(),
-                        supportingText = {
-                            if (isExistingRepo) {
-                                Text("✅ Existing .git repository found", color = Color(0xFF2E7D32)) // Dark Green
-                            } else {
-                                Text("No existing repo found. Ready to clone/init.")
+                    // Clickable Header
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isConfigExpanded = !isConfigExpanded }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Configuration", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = if (isConfigExpanded) "▲" else "▼",
+                            color = SaturatedOrange
+                        )
+                    }
+
+                    AnimatedVisibility(visible = isConfigExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = localPath,
+                                    onValueChange = { updatePref("LOCAL_PATH", it) { v -> localPath = v } },
+                                    label = { Text("Local Folder Path") },
+                                    colors = textFieldColors,
+                                    modifier = Modifier.weight(1f),
+                                    supportingText = {
+                                        if (isExistingRepo) {
+                                            Text("✅ Valid .git repository found", color = Color(0xFF4CAF50))
+                                        } else {
+                                            Text("No valid repo found. Ready to clone/init.", color = Color.Gray)
+                                        }
+                                    }
+                                )
+
+                                Button(
+                                    onClick = { showDirPicker = true },
+                                    modifier = Modifier.padding(top = 8.dp)
+                                ) {
+                                    Text("Browse")
+                                }
                             }
+
+                            // The Popup Dialog
+                            if (showDirPicker) {
+                                DirectoryPickerDialog(
+                                    initialDir = File(localPath).let { if (it.exists()) it else File(defaultRepoPath).parentFile ?: File("/") },
+                                    onDismiss = { showDirPicker = false },
+                                    onDirSelected = { selectedFile ->
+                                        updatePref("LOCAL_PATH", selectedFile.absolutePath) { v -> localPath = v }
+                                        showDirPicker = false
+                                    }
+                                )
+                            }
+                            OutlinedTextField(
+                                value = remoteUrl,
+                                onValueChange = { updatePref("REMOTE_URL", it) { v -> remoteUrl = v } },
+                                label = { Text("Remote URL") },
+                                colors = textFieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = username,
+                                onValueChange = { updatePref("USERNAME", it) { v -> username = v } },
+                                label = { Text("Username") },
+                                colors = textFieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = token,
+                                onValueChange = { updatePref("TOKEN", it) { v -> token = v } },
+                                label = { Text("Personal Access Token") },
+                                visualTransformation = PasswordVisualTransformation(),
+                                colors = textFieldColors,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                    )
-                    OutlinedTextField(
-                        value = remoteUrl,
-                        onValueChange = { updatePref("REMOTE_URL", it) { v -> remoteUrl = v } },
-                        label = { Text("Remote URL") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { updatePref("USERNAME", it) { v -> username = v } },
-                        label = { Text("Username") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = token,
-                        onValueChange = { updatePref("TOKEN", it) { v -> token = v } },
-                        label = { Text("Personal Access Token") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    }
                 }
             }
 
@@ -172,11 +348,11 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("Actions", style = MaterialTheme.typography.titleMedium)
-                    
+                    Spacer(modifier = Modifier.height(4.dp))
+
                     Button(
                         onClick = {
                             runGitOp("Update Remote") {
-                                // Will create the repo directory and init if it doesn't exist
                                 if (!currentRepoDir.exists()) currentRepoDir.mkdirs()
                                 val git = if (isExistingRepo) Git.open(currentRepoDir) else Git.init().setDirectory(currentRepoDir).call()
                                 val config = git.repository.config
@@ -239,23 +415,6 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                         enabled = isExistingRepo
                     ) {
                         Text("Pull")
-                    }
-                    
-                    Button(
-                        onClick = {
-                            runGitOp("Delete Remote") {
-                                val git = Git.open(currentRepoDir)
-                                val config = git.repository.config
-                                config.unset("remote", "origin", "url")
-                                config.save()
-                                git.close()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        enabled = isExistingRepo
-                    ) {
-                        Text("Delete Remote Configuration")
                     }
                 }
             }
