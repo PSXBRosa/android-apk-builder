@@ -380,7 +380,7 @@ fun DirectoryPickerDialog(
                     }
                 }
 
-                HorizontalDivider()
+                Divider()
 
                 Box(modifier = Modifier.heightIn(max = 300.dp)) {
                     if (folders.isEmpty()) {
