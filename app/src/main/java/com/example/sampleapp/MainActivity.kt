@@ -114,7 +114,7 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                     // 1. Point JGit explicitly to the .git folder if it exists
                     val gitFolder = File(currentRepoDir, ".git")
                     val repoToOpen = if (gitFolder.exists()) gitFolder else currentRepoDir
-                    val git = Git.open(repoToOpen)
+                    val git = Git.open(currentRepoDir)
 
                     // 2. Dynamically check for available remotes instead of assuming "origin"
                     val remotes = git.repository.remoteNames
