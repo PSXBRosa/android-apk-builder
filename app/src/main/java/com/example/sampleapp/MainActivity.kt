@@ -24,6 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import java.io.File
 
 // --- Custom Theme Colors ---
@@ -197,6 +200,29 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
+          if (!hasStoragePermission && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            // This is the Intent code from earlier!
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                            }
+                            permissionLauncher.launch(intent)
+                        }
+                ) {
+                    Text(
+                        text = "⚠️ Missing Storage Permission. Tap here to grant 'All files access' so JGit can read/write your repositories.",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
             // --- Status Indicator ---
             Card(
                 colors = CardDefaults.cardColors(
