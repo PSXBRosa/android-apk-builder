@@ -44,81 +44,6 @@ val OrangeDarkColorScheme = darkColorScheme(
     onErrorContainer = Color.Black
 )
 
-@Composable
-fun DirectoryPickerDialog(
-    initialDir: File,
-    onDismiss: () -> Unit,
-    onDirSelected: (File) -> Unit
-) {
-    var currentDir by remember { mutableStateOf(initialDir) }
-
-    // Get list of folders only, sorted alphabetically
-    val folders = currentDir.listFiles { file -> file.isDirectory && !file.isHidden }
-        ?.sortedBy { it.name } ?: emptyList()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text("Select Folder", style = MaterialTheme.typography.titleLarge)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = currentDir.absolutePath,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
-                )
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // "Go Up" Button
-                if (currentDir.parentFile != null) {
-                    TextButton(
-                        onClick = { currentDir = currentDir.parentFile!! },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("📁 .. (Go Up)")
-                    }
-                }
-
-                Divider()
-
-                // Scrollable list of folders
-                Box(modifier = Modifier.heightIn(max = 300.dp)) {
-                    if (folders.isEmpty()) {
-                        Text(
-                            "No subfolders",
-                            modifier = Modifier.padding(16.dp),
-                            color = Color.Gray
-                        )
-                    } else {
-                        androidx.compose.foundation.lazy.LazyColumn {
-                            items(folders.size) { index ->
-                                val folder = folders[index]
-                                TextButton(
-                                    onClick = { currentDir = folder },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("📁 ${folder.name}")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onDirSelected(currentDir) }) {
-                Text("Select This Folder")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -145,26 +70,44 @@ class MainActivity : ComponentActivity() {
 fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
     val coroutineScope = rememberCoroutineScope()
 
+    // States
     var localPath by remember { mutableStateOf(prefs.getString("LOCAL_PATH", defaultRepoPath) ?: defaultRepoPath) }
-    var remoteUrl by remember { mutableStateOf(prefs.getString("REMOTE_URL", "https://github.com/username/repo.git") ?: "") }
+    var remoteUrl by remember { mutableStateOf(prefs.getString("REMOTE_URL", "") ?: "") }
     var username by remember { mutableStateOf(prefs.getString("USERNAME", "") ?: "") }
     var token by remember { mutableStateOf(prefs.getString("TOKEN", "") ?: "") }
 
     var statusMessage by remember { mutableStateOf("Ready") }
     var isError by remember { mutableStateOf(false) }
-    // Collapsible Menu State
-    var isConfigExpanded by remember { mutableStateOf(true) }
 
-    // Directory Picker State
+    // UI Toggles (Declared exactly once)
+    var isConfigExpanded by remember { mutableStateOf(true) }
     var showDirPicker by remember { mutableStateOf(false) }
-    // Collapsible Menu State
-    var isConfigExpanded by remember { mutableStateOf(true) }
 
-    // Use absoluteFile to ensure JGit gets a fully resolved path
     val currentRepoDir = File(localPath).absoluteFile
-    // Check for "config" or "HEAD" to ensure it's a fully initialized git repo, not just an empty folder
     val isExistingRepo = File(currentRepoDir, ".git/config").exists() || File(currentRepoDir, ".git/HEAD").exists()
 
+    // Helper Functions (Must be inside GitControlScreen)
+    fun updatePref(key: String, value: String, updater: (String) -> Unit) {
+        updater(value)
+        prefs.edit().putString(key, value).apply()
+    }
+
+    fun runGitOp(operationName: String, block: () -> Unit) {
+        coroutineScope.launch {
+            isError = false
+            statusMessage = "Running: $operationName..."
+            try {
+                withContext(Dispatchers.IO) { block() }
+                statusMessage = "Success: $operationName"
+            } catch (e: Exception) {
+                isError = true
+                statusMessage = "Error: ${e.localizedMessage}"
+                Log.e("GitApp", "Git Error", e)
+            }
+        }
+    }
+
+    // Auto-load remote URL when the folder changes
     LaunchedEffect(localPath) {
         if (isExistingRepo) {
             withContext(Dispatchers.IO) {
@@ -185,27 +128,6 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
         }
     }
 
-    fun runGitOp(operationName: String, block: () -> Unit) {
-        coroutineScope.launch {
-            isError = false
-            statusMessage = "Running: $operationName..."
-            try {
-                withContext(Dispatchers.IO) { block() }
-                statusMessage = "Success: $operationName"
-            } catch (e: Exception) {
-                isError = true
-                statusMessage = "Error: ${e.localizedMessage}"
-                Log.e("GitApp", "Git Error", e)
-            }
-        }
-    }
-
-    fun updatePref(key: String, value: String, updater: (String) -> Unit) {
-        updater(value)
-        prefs.edit().putString(key, value).apply()
-    }
-
-    // Standardize TextField colors for the custom theme
     val textFieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = SaturatedOrange,
         unfocusedTextColor = SaturatedOrange,
@@ -257,7 +179,6 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Clickable Header
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -275,6 +196,8 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
 
                     AnimatedVisibility(visible = isConfigExpanded) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                            // Local Path Input with Browse Button
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -303,7 +226,6 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                                 }
                             }
 
-                            // The Popup Dialog
                             if (showDirPicker) {
                                 DirectoryPickerDialog(
                                     initialDir = File(localPath).let { if (it.exists()) it else File(defaultRepoPath).parentFile ?: File("/") },
@@ -314,6 +236,7 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                                     }
                                 )
                             }
+
                             OutlinedTextField(
                                 value = remoteUrl,
                                 onValueChange = { updatePref("REMOTE_URL", it) { v -> remoteUrl = v } },
@@ -420,4 +343,77 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
             }
         }
     }
+}
+
+@Composable
+fun DirectoryPickerDialog(
+    initialDir: File,
+    onDismiss: () -> Unit,
+    onDirSelected: (File) -> Unit
+) {
+    var currentDir by remember { mutableStateOf(initialDir) }
+
+    val folders = currentDir.listFiles { file -> file.isDirectory && !file.isHidden }
+        ?.sortedBy { it.name } ?: emptyList()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Select Folder", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = currentDir.absolutePath,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (currentDir.parentFile != null) {
+                    TextButton(
+                        onClick = { currentDir = currentDir.parentFile!! },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("📁 .. (Go Up)")
+                    }
+                }
+
+                HorizontalDivider()
+
+                Box(modifier = Modifier.heightIn(max = 300.dp)) {
+                    if (folders.isEmpty()) {
+                        Text(
+                            "No subfolders",
+                            modifier = Modifier.padding(16.dp),
+                            color = Color.Gray
+                        )
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn {
+                            items(folders.size) { index ->
+                                val folder = folders[index]
+                                TextButton(
+                                    onClick = { currentDir = folder },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("📁 ${folder.name}")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onDirSelected(currentDir) }) {
+                Text("Select This Folder")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
