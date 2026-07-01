@@ -107,22 +107,43 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
         }
     }
 
-    // Auto-load remote URL when the folder changes
     LaunchedEffect(localPath) {
         if (isExistingRepo) {
             withContext(Dispatchers.IO) {
                 try {
-                    val git = Git.open(currentRepoDir)
-                    val url = git.repository.config.getString("remote", "origin", "url")
+                    // 1. Point JGit explicitly to the .git folder if it exists
+                    val gitFolder = File(currentRepoDir, ".git")
+                    val repoToOpen = if (gitFolder.exists()) gitFolder else currentRepoDir
+                    val git = Git.open(repoToOpen)
+
+                    // 2. Dynamically check for available remotes instead of assuming "origin"
+                    val remotes = git.repository.remoteNames
+                    var foundUrl: String? = null
+
+                    if (remotes.contains("origin")) {
+                        foundUrl = git.repository.config.getString("remote", "origin", "url")
+                    } else if (remotes.isNotEmpty()) {
+                        foundUrl = git.repository.config.getString("remote", remotes.first(), "url")
+                    }
+
                     git.close()
 
-                    if (!url.isNullOrBlank()) {
-                        updatePref("REMOTE_URL", url) { v -> remoteUrl = v }
-                    } else {
-                        updatePref("REMOTE_URL", "") { v -> remoteUrl = v }
+                    // 3. Force the UI and SharedPreferences update onto the Main thread
+                    withContext(Dispatchers.Main) {
+                        if (!foundUrl.isNullOrBlank()) {
+                            updatePref("REMOTE_URL", foundUrl) { v -> remoteUrl = v }
+                            statusMessage = "Auto-loaded remote from config"
+                        } else {
+                            // It's a valid local repo, but it hasn't been linked to a remote yet
+                            updatePref("REMOTE_URL", "") { v -> remoteUrl = v }
+                            statusMessage = "Local repo found, but no remote configured."
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e("GitApp", "Could not read remote URL", e)
+                    withContext(Dispatchers.Main) {
+                        Log.e("GitApp", "Could not read remote URL", e)
+                        // Silently fail so we don't spam the user with errors while they type manually
+                    }
                 }
             }
         }
@@ -173,7 +194,7 @@ fun GitControlScreen(prefs: SharedPreferences, defaultRepoPath: String) {
                 )
             }
 
-            // --- Configuration Card (Collapsible) ---
+            // --- Configuration Card ---
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.padding(16.dp),
